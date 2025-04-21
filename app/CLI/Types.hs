@@ -21,6 +21,7 @@ data Command
   | Query Query
   | Submit Network Endpoint FilePath
   | EvaluateTx Network Endpoint FilePath
+  | AgentMonitor AgentOptions
 
 data Script 
   = OneWayBeaconScript
@@ -181,4 +182,22 @@ instance ToJSON SwapUTxO where
            , "amount" .= swapValue
            , "swap_info" .= swapDatum
            ]
+
+-- | Configuration for the autonomous swap agent
+data AgentOptions = AgentOptions
+  { aoOfferAsset           :: AssetConfig       -- offer asset policy and name
+  , aoAskAsset             :: AssetConfig       -- ask asset policy and name
+  , aoPollSeconds          :: Int               -- polling interval in seconds
+  , aoApiBase              :: String            -- base URL for Agent API
+  , aoApiKey               :: Maybe String      -- optional Agent API key
+  , aoSigningKey           :: FilePath          -- path to payment signing key
+  , aoVerificationKey      :: FilePath          -- path to payment verification key
+  , aoAgentAddress         :: String            -- agent payment address (bech32 or file)
+  , aoNetworkMagic         :: Maybe Int         -- testnet-magic N; Nothing = mainnet
+  , aoProtocolParamsFile   :: Maybe FilePath    -- optional protocol parameters file override
+  , aoNodeSocket           :: Maybe FilePath    -- optional node socket override
+  , aoBlockfrostProjectId  :: Maybe String      -- optional Blockfrost project ID
+  , aoDryRun               :: Bool              -- whether to run in dry-run mode (no transactions)
+  , aoMakerOnly            :: Bool              -- whether to allow CreateSwap actions
+  } deriving (Show)
 

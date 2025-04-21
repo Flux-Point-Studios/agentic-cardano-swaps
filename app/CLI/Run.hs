@@ -21,6 +21,7 @@ import qualified CardanoSwaps.OneWaySwap as OneWay
 import qualified CardanoSwaps.TwoWaySwap as TwoWay
 import CLI.Types
 import CLI.Query
+import CLI.Agent (runAgentMonitor)
 
 runCommand :: Command -> IO ()
 runCommand cmd = case cmd of
@@ -34,6 +35,7 @@ runCommand cmd = case cmd of
     runSubmit network api txFile >>= LBS.putStr . encode
   EvaluateTx network api txFile -> 
     runEvaluateTx network api txFile >>= LBS.putStr . encode
+  AgentMonitor opts -> runAgentMonitor opts
 
 runExportScriptCmd :: Script -> FilePath -> IO ()
 runExportScriptCmd script file = do

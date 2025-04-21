@@ -20,6 +20,9 @@ be found [here](./Benchmarks/).
 - [Features Discussion](#features-discussion)
 - [FAQ](#faq)
 - [Conclusion](#conclusion)
+- [Executing a Swap](#executing-a-swap)
+- [Order Book Example](OrderBookExample.md)
+- [Autonomous Agent](docs/AutonomousAgent.md)
 
 ## Abstract
 
@@ -1130,3 +1133,21 @@ to the use of Beacon Tokens, decentralization is no longer limited by the design
 the limiting factor is now the off-chain querying. However, innovations in this space are still in
 the early days. The Koios API is an example of a more decentralized off-chain platform. As the
 technology improves, so too will the decentralization of the protocol.
+
+## Autonomous Agent
+
+The `cardano-swaps` CLI now includes an **autonomous agent module** that can monitor the DEX order book, analyze market opportunities using the Agent API, and execute swaps automatically.
+
+```bash
+# Run the agent on testnet in dry-run mode
+cardano-swaps agent \
+  --offer-asset "00." \
+  --ask-asset "c0f8644a01a6...4f" \
+  --interval 60 \
+  --testnet-magic 1 \
+  --dry-run
+```
+
+For complete documentation, usage examples, and configuration options, see the [Autonomous Agent documentation](docs/AutonomousAgent.md).
+
+## References

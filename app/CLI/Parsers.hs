@@ -31,6 +31,8 @@ parseCommand = hsubparser $ mconcat
       info pSubmit $ progDesc "Submit a transaction to the blockchain."
   , command "evaluate-tx" $
       info pEvaluateTx $ progDesc "Estimate script execution units for a transaction."
+  , command "agent" $
+      info pAgentOpts $ progDesc "Run the autonomous swap agent."
   ]
 
 -------------------------------------------------
@@ -627,4 +629,53 @@ pTxFile = strOption
   (  long "tx-file"
   <> metavar "STRING"
   <> help "Transaction file path."
+  )
+
+-- | Parser for the autonomous agent command
+pAgentOpts :: Parser Command
+pAgentOpts = AgentMonitor <$>
+  ( AgentOptions
+    <$> pAssetConfig "offer"                     -- --offer-asset
+    <*> pAssetConfig "ask"                       -- --ask-asset
+    <*> option auto                               -- --interval
+        ( long "interval" <> short 'i' <> metavar "SECONDS"
+       <> value 30 <> showDefault
+       <> help "Polling interval in seconds (default 30)" )
+    <*> strOption                                 -- --agent-api-url
+        ( long "agent-api-url" <> metavar "URL"
+       <> value "https://api.fluxpointstudios.com" <> showDefault
+       <> help "Base URL for Agent API" )
+    <*> optional (strOption                      -- --agent-api-key
+        ( long "agent-api-key" <> metavar "KEY"
+       <> help "Agent API key (env: AGENT_API_KEY)" ))
+    <*> strOption                                 -- --signing-key
+        ( long "signing-key" <> metavar "FILE"
+       <> value "~/.agent-wallet/agent.skey" <> showDefault
+       <> help "Payment signing key file (env: AGENT_SKEY)" )
+    <*> strOption                                 -- --verification-key
+        ( long "verification-key" <> metavar "FILE"
+       <> value "~/.agent-wallet/agent.vkey" <> showDefault
+       <> help "Payment verification key file (env: AGENT_VKEY)" )
+    <*> strOption                                 -- --agent-address
+        ( long "agent-address" <> metavar "FILE|ADDR"
+       <> value "~/.agent-wallet/agent.addr" <> showDefault
+       <> help "Agent payment address or file (env: AGENT_ADDRESS)" )
+    <*> ( flag' Nothing                             -- --mainnet
+          ( long "mainnet" <> short 'm' <> help "Use mainnet" )
+        <|> (Just <$> option auto                  -- --testnet-magic N
+          ( long "testnet-magic" <> short 't' <> metavar "N"
+         <> help "Use testnet-magic N" )) )
+    <*> optional (strOption                      -- --protocol-params
+        ( long "protocol-params" <> metavar "FILE"
+       <> help "Protocol parameters file override" ))
+    <*> optional (strOption                      -- --node-socket
+        ( long "node-socket" <> metavar "FILE"
+       <> help "Node socket file (env: CARDANO_NODE_SOCKET_PATH)" ))
+    <*> optional (strOption                      -- --blockfrost-project-id
+        ( long "blockfrost-project-id" <> metavar "ID"
+       <> help "Blockfrost project ID (env: BLOCKFROST_PROJECT_ID)" ))
+    <*> switch                                    -- --dry-run
+        ( long "dry-run" <> help "Prepare but don't submit transactions" )
+    <*> switch                                    -- --maker-only
+        ( long "maker-only" <> help "Allow CreateSwap actions when suggested by AI" )
   )
