@@ -4,3 +4,9 @@ ignored/
 aiken/artifacts/
 aiken/build/
 aiken/docs/
+
+# Demeter secrets
+keys/
+.env
+*.tar.gz
+cardano-cli-*
