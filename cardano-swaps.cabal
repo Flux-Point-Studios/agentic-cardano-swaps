@@ -99,6 +99,7 @@ executable cardano-swaps
     main-is: Main.hs
     other-modules:
         CLI.Types
+      , CLI.Common
       , CLI.Run
       , CLI.Query
       , CLI.Parsers
@@ -115,13 +116,7 @@ executable cardano-swaps
       aeson-pretty,
       file-embed,
       prettyprinter-ansi-terminal,
-      directory >= 1.3.6 && < 1.4,
-      filepath >= 1.4.2 && < 1.5,
-      process >= 1.6.5 && < 1.7,
-      time >= 1.8 && < 1.12,
-      unix >= 2.7 && < 2.8,
-      typed-process >= 0.2.6 && < 0.3,
-      cryptonite >= 0.29 && < 0.30
+      crypton
     hs-source-dirs: app
     default-extensions:
       OverloadedStrings
