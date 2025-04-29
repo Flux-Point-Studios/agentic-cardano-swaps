@@ -1,7 +1,7 @@
 ###############################################################################
 # 1) Build stage – BLST + cardano‑swaps (GHC 9.4.8 already present)
 ###############################################################################
-FROM ghcr.io/haskell/ghc:9.4.8-bullseye AS build
+FROM haskell:9.6.4-buster AS build
 # ghcr.io/haskell/ghc images come with: ghc, cabal‑install‑3.14.2, curl,
 # git, gcc, etc.
 
@@ -15,6 +15,7 @@ RUN git clone --depth 1 https://github.com/supranational/blst.git /tmp/blst \
  && cd /tmp/blst && ./build.sh \
  && install -Dm644 libblst.a /usr/local/lib/libblst.a \
  && install -Dm644 bindings/blst.h /usr/local/include/blst/blst.h \
+ && mkdir -p /usr/local/lib/pkgconfig \
  && printf 'prefix=/usr/local\nexec_prefix=${prefix}\nlibdir=${exec_prefix}/lib\nincludedir=${prefix}/include\n\nName: libblst-any\nVersion: 0.3\nLibs: -L${libdir} -lblst\nCflags: -I${includedir}\n' \
     >/usr/local/lib/pkgconfig/libblst-any.pc
 
@@ -30,22 +31,24 @@ COPY . .
 RUN sed -i '/^[[:space:]]*with-compiler[[:space:]]*:/d' cabal.project
 
 RUN { \
-      echo 'constraints: vector <0.13'; \
-      echo ''; \
       echo 'package cardano-crypto-class'; \
       echo '  flags: -external-blst'; \
       echo ''; \
-      echo 'constraints:'; \
-      echo '  ouroboros-consensus == 0.10.0.0,'; \
-      echo '  ouroboros-network-framework == 0.8.3.0,'; \
-      echo '  ouroboros-network-protocols == 0.6.0.0,'; \
-      echo '  ouroboros-network-api == 0.6.0.0,'; \
-      echo '  ouroboros-network == 0.9.0.0'; \
+      echo 'package digest'; \
+      echo '  flags: -pkg-config'; \
     } >> cabal.project.local
 
+# ---------------------------------------------------------------------------
+# Use /usr/local/cabal-cache instead of /tmp for the writable cache location
+# ---------------------------------------------------------------------------
+ENV XDG_CACHE_HOME=/usr/local/cabal-cache
+RUN mkdir -p $XDG_CACHE_HOME
+
+# --- build cardano-swaps -----------------------------------------------------
 RUN cabal update && \
     cabal build cardano-swaps:exe:cardano-swaps \
       --disable-tests --disable-benchmarks -j
+
 
 ###############################################################################
 # 2) Runtime stage – tiny image with runtime libs only

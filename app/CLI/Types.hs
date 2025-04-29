@@ -1,7 +1,33 @@
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module CLI.Types where
+module CLI.Types 
+  ( Command(..)
+  , Script(..)
+  , InternalDatum(..)
+  , SpendingRedeemer(..)
+  , InternalTwoWaySwapRedeemer(..)
+  , MintingRedeemer(..)
+  , BeaconInfo(..)
+  , Output(..)
+  , Network(..)
+  , Endpoint(..)
+  , TxCBOR(..)
+  , Format(..)
+  , UserAddress(..)
+  , Query(..)
+  , QueryOwnSwaps(..)
+  , QueryAll(..)
+  , Asset(..)
+  , PersonalUTxO(..)
+  , SwapDatum(..)
+  , SwapUTxO(..)
+  , AgentOptions(..)
+  , OfferAsset(..)
+  , AskAsset(..)
+  , AssetConfig
+  , TwoWayPair
+  ) where
 
 import Data.Aeson
 import Data.Text (Text)

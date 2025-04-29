@@ -3,7 +3,7 @@
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module CLI.Agent (runAgentMonitor) where
+module CLI.PatchedAgent (runAgentMonitor) where
 
 import Control.Concurrent        (threadDelay)
 import Control.Exception         (throwIO, bracket, catch, SomeException)
@@ -25,7 +25,7 @@ import Network.HTTP.Client       ( Manager
                                  , httpLbs, method, newManager
                                  , parseRequest, requestBody
                                  , requestHeaders, responseBody
-                                 , HttpException(..)
+                                 , HttpException(..), responseStatus
                                  )
 import Network.HTTP.Client.TLS   (tlsManagerSettings)
 import System.Directory          (createDirectoryIfMissing, doesFileExist, getHomeDirectory, getModificationTime, removeDirectoryRecursive)
@@ -51,6 +51,13 @@ import qualified PlutusTx.Ratio as Ratio
 import qualified Data.UUID as UUID
 import qualified Data.UUID.V4 as UUID
 
+-- For improved OpenAI handling
+import Data.Aeson
+import Data.Aeson.Lens
+import qualified Data.Aeson as A
+import Control.Lens hiding ((.=))
+import qualified Control.Lens as L
+
 import CLI.Types                 -- shared types: AgentOptions, MemoryEntry, Network, etc.
 import CLI.Query                 -- bring in only the query functions
   ( runQueryAllSwapsByTradingPair
@@ -68,11 +75,20 @@ formatAsset (pid, name) = show pid ++ "." ++ show name
 
 -- | AiAction returned by Agent API
 data AIAction
-  = TakeSwap   { aiUtxo :: T.Text }
-  | CreateSwap { aiPrice :: Double, aiAmount :: Integer }
-  | NoAction
+  = TakeSwap   { aiUtxo :: T.Text, aiRationale :: T.Text }
+  | CreateSwap { aiPrice :: Double, aiAmount :: Integer, aiRationale :: T.Text }
+  | NoAction   { aiRationale :: T.Text }
   deriving (Show, Generic)
-instance FromJSON AIAction
+
+instance FromJSON AIAction where
+  parseJSON = withObject "AIAction" $ \v -> do
+    action <- v .: "action"
+    rationale <- v .: "rationale"
+    case (action :: T.Text) of
+      "TakeSwap" -> TakeSwap <$> v .: "aiUtxo" <*> pure rationale
+      "CreateSwap" -> CreateSwap <$> v .: "aiPrice" <*> v .: "aiAmount" <*> pure rationale
+      "NoAction" -> pure $ NoAction rationale
+      _ -> fail $ "Unknown action: " ++ T.unpack action
 
 -- | Memory entry for knowledge graph
 data MemoryEntry = MemoryEntry
@@ -226,12 +242,14 @@ agentLoop cfg@AgentOptions{..} stateMVar agentAddr skFile vkFile netFlag network
       -- 3. Ask AI
       action <- if length swaps > 0
                 then withRetry stateMVar (askAI cfg mgr stateMVar (summarizeOrders swaps) mems) "AI query"
-                else pure NoAction
+                else pure $ NoAction "No swaps available"
 
       -- 4. Handle action
       outcome <- case action of
-        NoAction   -> logInfo "⚠️ No action." >> pure Nothing
-        TakeSwap u -> do ok <- runTakeSwapTx cfg mgr agentAddr skFile vkFile netFlag networkType paramsFile tmpDir (T.unpack u) swaps isDryRun
+        NoAction r   -> logInfo ("⚠️ No action. Reason: " ++ T.unpack r) >> pure Nothing
+        TakeSwap u r -> do 
+                         logInfo $ "🔍 AI Reasoning: " ++ T.unpack r
+                         ok <- runTakeSwapTx cfg mgr agentAddr skFile vkFile netFlag networkType paramsFile tmpDir (T.unpack u) swaps isDryRun
                          let note = if ok then "Filled swap " <> u else "Failed swap " <> u
                              ts = T.pack . show <$> getCurrentTime
                          ts' <- ts
@@ -239,11 +257,13 @@ agentLoop cfg@AgentOptions{..} stateMVar agentAddr skFile vkFile netFlag network
         CreateSwap{..} -> 
           if isMakerOnly 
           then do
+            logInfo $ "🔍 AI Reasoning: " ++ T.unpack aiRationale
             logInfo $ "CreateSwap price=" ++ show aiPrice ++ ", amount=" ++ show aiAmount
             -- TODO: Implement create swap in future iteration
             logInfo "🚧 CreateSwap not yet implemented, but maker-only flag is enabled."
             pure Nothing
           else do
+            logInfo $ "🔍 AI Reasoning: " ++ T.unpack aiRationale
             logInfo "⚠️ AI suggested CreateSwap but maker-only flag is not enabled. Skipping."
             pure Nothing
 
@@ -366,8 +386,120 @@ fetchMem mst AgentOptions{..} mgr = do
         return xs
       Left err -> logError ("Memory decode error: " ++ err) >> return []
 
+--------------------------------------------------------------------------------
+-- IMPROVED AI REASONING
+--------------------------------------------------------------------------------
 askAI :: AgentOptions -> Manager -> MVar AgentState -> [SwapUTxO] -> [Value] -> IO AIAction
 askAI AgentOptions{..} mgr stateMVar swaps mems = do
+    -- Check if we should use improved OpenAI API path or standard agent API path
+    let useOpenAIDirect = T.isInfixOf "openai.com" (T.pack aoApiBase)
+    
+    if useOpenAIDirect
+    then askOpenAI aoApiKey swaps mems mgr
+    else askAgentAPI aoApiKey aoApiBase stateMVar swaps mems mgr
+
+-- | Ask OpenAI directly using our improved implementation
+askOpenAI :: Maybe String -> [SwapUTxO] -> [Value] -> Manager -> IO AIAction
+askOpenAI mApiKey swaps mems mgr = do
+    case mApiKey of
+      Nothing -> logError "No OpenAI API key provided" >> return (NoAction "No API key")
+      Just apiKey -> do
+        -- Prepare system and user messages
+        let sysMsg :: T.Text
+            sysMsg = "You are an autonomous Cardano swap-bot that helps trade tokens on the Cardano blockchain. You need to analyze available swap opportunities and make strategic trading decisions based on market data, price trends, and previous actions in memory. Always provide detailed reasoning for your decisions."
+            ordJson = encode swaps
+            memJson = encode mems
+            usrMsg :: T.Text
+            usrMsg = "I'm looking for your trading recommendation based on this data.\n\nAvailable Orders (swap opportunities):\n" <> TE.decodeUtf8 (BL.toStrict ordJson)
+                  <> "\n\nPrevious Trading History:\n" <> TE.decodeUtf8 (BL.toStrict memJson)
+                  <> "\n\nAnalyze this data and provide a JSON object representing your decision WITH A DETAILED EXPLANATION OF YOUR REASONING. Consider price trends, market gaps, and trading strategies. You must respond in valid JSON with one of these formats:\n"
+                  <> "1. To take an existing swap: {\"action\":\"TakeSwap\",\"aiUtxo\":\"txhash#index\",\"rationale\":\"your detailed reasoning\"}\n"
+                  <> "2. To create a new swap: {\"action\":\"CreateSwap\",\"aiPrice\":0.45,\"aiAmount\":1000000,\"rationale\":\"your detailed reasoning\"}\n"
+                  <> "3. To do nothing: {\"action\":\"NoAction\",\"rationale\":\"your detailed reasoning\"}\n"
+                  <> "\nYour response must be valid JSON that follows one of these formats exactly. In the rationale field, provide a thorough explanation of why this is the optimal decision."
+            
+            payload = object [ 
+                "model" A..= ("gpt-4o-mini" :: T.Text),
+                "messages" A..= [ 
+                    object ["role" A..= ("system" :: T.Text), "content" A..= sysMsg]
+                  , object ["role" A..= ("user" :: T.Text), "content" A..= usrMsg]
+                ],
+                "temperature" A..= (0.2 :: Double),
+                "max_tokens" A..= (1000 :: Int)
+              ]
+            
+            url = "https://api.openai.com/v1/chat/completions"
+        
+        -- Prepare HTTP request
+        req0 <- parseRequest url
+        
+        -- Add authentication headers
+        let req = req0 { 
+              method = "POST",
+              requestHeaders = [
+                  ("Content-Type", "application/json"),
+                  ("Authorization", "Bearer " <> TE.encodeUtf8 (T.pack apiKey))
+              ],
+              requestBody = RequestBodyLBS (encode payload)
+            }
+        
+        -- Send request
+        logInfo "Sending request to OpenAI API..."
+        resp <- httpLbs req mgr
+        
+        -- Parse OpenAI response
+        logInfo $ "Response status: " ++ show (responseStatus resp)
+        let respBody = responseBody resp
+        
+        case decode respBody :: Maybe Value of
+          Just responseObj -> do
+            -- Extract the content from the response
+            case responseObj ^? key "choices" . nth 0 . key "message" . key "content" . _String of
+              Just outputText -> do
+                logInfo $ "OpenAI response received"
+                
+                -- Try to parse JSON from the text
+                case extractAndParseJSON outputText of
+                  Just action -> do
+                    logInfo $ "Successfully parsed AI action: " ++ show action
+                    return action
+                  Nothing -> do
+                    logError "Failed to parse JSON from AI response"
+                    return $ NoAction "Failed to parse AI response"
+              Nothing -> do
+                logError "Could not find content in response"
+                return $ NoAction "No response content"
+          _ -> do
+            logError "Failed to decode API response"
+            return $ NoAction "API decode failure"
+
+-- | Helper function to extract and parse JSON from the LLM response
+extractAndParseJSON :: T.Text -> Maybe AIAction
+extractAndParseJSON text = do
+  -- Try to parse directly
+  let directResult = decode (BL.fromStrict $ TE.encodeUtf8 text)
+  case directResult of
+    Just action -> return action
+    Nothing -> do
+      -- Look for JSON object within text
+      let jsonStart = T.findIndex (== '{') text
+          jsonEnd = findIndexEnd (== '}') text
+      case (jsonStart, jsonEnd) of
+        (Just start, Just end) -> 
+          let jsonText = T.take (end - start + 1) $ T.drop start text
+          in decode (BL.fromStrict $ TE.encodeUtf8 jsonText)
+        _ -> Nothing
+
+-- Helper function to find the last index of a character
+findIndexEnd :: (Char -> Bool) -> T.Text -> Maybe Int
+findIndexEnd p t = 
+  let len = T.length t
+      indices = [i | i <- [0..len - 1], i < len && p (T.index t i)]
+  in if null indices then Nothing else Just (last indices)
+
+-- | Ask the agent API (original implementation)
+askAgentAPI :: Maybe String -> String -> MVar AgentState -> [SwapUTxO] -> [Value] -> Manager -> IO AIAction
+askAgentAPI aoApiKey aoApiBase stateMVar swaps mems mgr = do
     -- Create or retrieve session ID
     st <- takeMVar stateMVar
     sessionId <- case asSessionId st of
@@ -388,12 +520,12 @@ askAI AgentOptions{..} mgr stateMVar swaps mems = do
         
         -- Updated payload format to match API requirements
         payload = object [ 
-            "messages" .= [ 
-                object ["role" .= ("system"::T.Text), "content" .= (sysMsg::T.Text)]
-              , object ["role" .= ("user"::T.Text), "content" .= usrMsg]
+            "messages" A..= [ 
+                object ["role" A..= ("system"::T.Text), "content" A..= (sysMsg::T.Text)]
+              , object ["role" A..= ("user"::T.Text), "content" A..= usrMsg]
             ]
-          , "message" .= usrMsg
-          , "session_id" .= (T.pack sessionId)
+          , "message" A..= usrMsg
+          , "session_id" A..= (T.pack sessionId)
           ]
         
         url = aoApiBase <> "/chat"
@@ -412,12 +544,17 @@ askAI AgentOptions{..} mgr stateMVar swaps mems = do
         resetBackoff stateMVar
         case KM.lookup "reply" v of
           Just (String txt) -> case eitherDecode (BL.fromStrict $ TE.encodeUtf8 txt) of
-            Right act -> pure act
-            _ -> pure NoAction
-          _ -> pure NoAction
+            Right act -> do
+              -- Convert old format to new format with rationale
+              case act of
+                TakeSwap utx _    -> pure $ TakeSwap utx "Unspecified rationale" -- Add default rationale
+                CreateSwap p a _  -> pure $ CreateSwap p a "Unspecified rationale" -- Add default rationale
+                NoAction _        -> pure $ NoAction "No specific action needed" -- Add default rationale
+            _ -> pure $ NoAction "Failed to decode action"
+          _ -> pure $ NoAction "Invalid response format"
       Left err -> do
         logError $ "Failed to decode API response: " ++ err
-        pure NoAction
+        pure $ NoAction "API error"
 
 attachKey :: Maybe String -> Request -> Request
 attachKey Nothing  req = req

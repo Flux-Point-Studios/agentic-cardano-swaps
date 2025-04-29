@@ -19,8 +19,9 @@ import Data.Text (Text)
 import CardanoSwaps.Utils
 import qualified CardanoSwaps.OneWaySwap as OneWay
 import qualified CardanoSwaps.TwoWaySwap as TwoWay
-import CLI.Common
 import CLI.Query
+import CLI.Types
+import CLI.Agent (runAgentMonitor)
 
 runCommand :: Command -> IO ()
 runCommand cmd = case cmd of
