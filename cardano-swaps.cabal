@@ -105,7 +105,6 @@ executable cardano-swaps
       , CLI.Parsers
       , CLI.Query.Koios
       , CLI.Agent
-      , CLI.PatchedAgent
     build-depends:    
       cardano-swaps,
       optparse-applicative,
@@ -168,7 +167,9 @@ executable test-agent
       time >= 1.12.2,
       unordered-containers,
       uuid,
-      uuid-types
+      uuid-types,
+      lens,
+      lens-aeson
     default-extensions:
       OverloadedStrings
       RecordWildCards
@@ -228,7 +229,9 @@ executable test-agent-reasoning
       time >= 1.12.2,
       unordered-containers,
       uuid,
-      uuid-types
+      uuid-types,
+      lens,
+      lens-aeson
     default-extensions:
       OverloadedStrings
       RecordWildCards
@@ -290,47 +293,47 @@ executable openai-agent
       OverloadedStrings
       RecordWildCards
 
-executable prod-agent
-    import: 
-      lang,
-      internals
-    main-is: ProdAgent.hs
-    hs-source-dirs: 
-      test,
-      app
-    other-modules:
-        CLI.Types
-      , CLI.Common
-      , CLI.Run
-      , CLI.Query
-      , CLI.Parsers
-      , CLI.Query.Koios
-      , CLI.Agent
-      , CLI.PatchedAgent
-    build-depends:    
-      cardano-swaps,
-      optparse-applicative,
-      http-client,
-      http-client-tls,
-      text,
-      bytestring,
-      uuid,
-      uuid-types,
-      lens,
-      lens-aeson,
-      directory,
-      filepath,
-      servant,
-      servant-client,
-      vector,
-      aeson-pretty,
-      file-embed,
-      prettyprinter-ansi-terminal,
-      crypton,
-      unix >= 2.8.4.0,
-      typed-process >= 0.2.11.1,
-      time >= 1.12.2,
-      unordered-containers
-    default-extensions:
-      OverloadedStrings
-      RecordWildCards
+-- Commented out because we now use cardano-swaps executable with the agent subcommand
+-- executable prod-agent
+--     import: 
+--       lang,
+--       internals
+--     main-is: ProdAgent.hs
+--     hs-source-dirs: 
+--       test,
+--       app
+--     other-modules:
+--         CLI.Types
+--       , CLI.Common
+--       , CLI.Run
+--       , CLI.Query
+--       , CLI.Parsers
+--       , CLI.Query.Koios
+--       , CLI.Agent
+--     build-depends:    
+--       cardano-swaps,
+--       optparse-applicative,
+--       http-client,
+--       http-client-tls,
+--       text,
+--       bytestring,
+--       uuid,
+--       uuid-types,
+--       lens,
+--       lens-aeson,
+--       directory,
+--       filepath,
+--       servant,
+--       servant-client,
+--       vector,
+--       aeson-pretty,
+--       file-embed,
+--       prettyprinter-ansi-terminal,
+--       crypton,
+--       unix >= 2.8.4.0,
+--       typed-process >= 0.2.11.1,
+--       time >= 1.12.2,
+--       unordered-containers
+--     default-extensions:
+--       OverloadedStrings
+--       RecordWildCards

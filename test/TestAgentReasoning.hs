@@ -42,7 +42,7 @@ mockSwaps priceAmountUtxos = map createMockSwap priceAmountUtxos
       { swapTxHash = T.takeWhile (/= '#') utxoRef
       , swapOutputIndex = read $ T.unpack $ T.drop 1 $ T.dropWhile (/= '#') utxoRef
       , swapAddress = UserAddress "addr_test1xyz123..."  -- Use UserAddress constructor
-      , swapDatum = Just (OneWayDatum (T.pack $ show amount))  -- Use Text for dummy datum
+      , swapDatum = Nothing  -- no datum needed for this reasoning test
       , swapValue = [mockAsset amount]
       }
 
