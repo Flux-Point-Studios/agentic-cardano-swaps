@@ -236,59 +236,20 @@ executable test-agent-reasoning
       OverloadedStrings
       RecordWildCards
 
-executable test-ai-reasoning
+executable test-chained-profit
     import: 
       lang,
       internals
-    main-is: TestAIReasoning.hs
+    main-is: TestChainedProfit.hs
     hs-source-dirs: test
-    build-depends:    
+    build-depends:
       aeson,
       http-client,
       http-client-tls,
       text,
       bytestring,
-      uuid,
-      uuid-types
-    default-extensions:
-      OverloadedStrings
-      RecordWildCards
-
-executable test-openai
-    import: 
-      lang,
-      internals
-    main-is: TestOpenAI.hs
-    hs-source-dirs: test
-    build-depends:    
-      aeson,
-      http-client,
-      http-client-tls,
-      text,
-      bytestring,
-      uuid,
-      uuid-types,
       lens,
       lens-aeson
-    default-extensions:
-      OverloadedStrings
-      RecordWildCards
-
-executable openai-agent
-    import: 
-      lang,
-      internals
-    main-is: OpenAIAgent.hs
-    hs-source-dirs: test
-    build-depends:    
-      aeson,
-      http-client,
-      http-client-tls,
-      text,
-      bytestring,
-      lens,
-      lens-aeson,
-      directory
     default-extensions:
       OverloadedStrings
       RecordWildCards
