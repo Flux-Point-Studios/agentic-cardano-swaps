@@ -3,6 +3,7 @@ module Main where
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE NumericUnderscores #-}
 
 -- | This test demonstrates reasoning about multi-step swap paths where
 --   the eventual profit is only realised after several conversions.
@@ -47,15 +48,15 @@ import           Data.Aeson.Types               ( Parser )
 -- Data types
 --------------------------------------------------------------------------------
 
--- | A single swap that can be executed from one asset to another.
---   Only the high-level details are needed for LLM reasoning.
---   (UTxO reference, from asset, to asset and effective price).
-
+-- | Order-book style edge.  `seRate` is units of `seTo` per 1 unit of `seFrom`.
+--   `seMaxQty` caps the amount of `seFrom` that can be taken (thin = small cap).
 data SwapEdge = SwapEdge
-  { seUtxo   :: T.Text   -- ^ UTxO reference (TxHash#Ix)
-  , seFrom   :: T.Text   -- ^ Offered asset policy.asset or "lovelace"
-  , seTo     :: T.Text   -- ^ Asked asset
-  , seRate   :: Double   -- ^ Units of `seTo` received per 1 unit of `seFrom`
+  { seUtxo    :: T.Text   -- ^ UTxO reference (TxHash#Ix)
+  , seFrom    :: T.Text   -- ^ Offered asset (policy.asset or "lovelace")
+  , seTo      :: T.Text   -- ^ Asked   asset
+  , seRate    :: Double   -- ^ Units of `seTo` received per 1 unit `seFrom`
+  , seMaxQty  :: Double   -- ^ Maximum executable quantity of `seFrom`
+  , seIsThin  :: Bool     -- ^ Flag for illiquid (True = thin)
   } deriving (Show, Generic)
 
 instance ToJSON SwapEdge
@@ -84,6 +85,17 @@ instance FromJSON AIAction where
 -- Test scenarios
 --------------------------------------------------------------------------------
 
+-- | Helper to build a pool with a target price (y/x) while keeping total liquidity reasonable.
+mkEdge :: T.Text -> T.Text -> T.Text -> Double -> SwapEdge
+mkEdge utxo from to rate = SwapEdge utxo from to rate 10_000 False
+
+-- | Illiquid edge with small quantity cap.
+mkThinEdge :: T.Text -> T.Text -> T.Text -> Double -> Double -> SwapEdge
+mkThinEdge utxo from to rate cap = SwapEdge utxo from to rate cap True
+
+-- | Illiquid WMT/AGIX pool – only 4 k vs 3.5 k tokens.
+illiquidWmtAgix = mkThinEdge "thin#0" "policyWMT.574d54" "policyAGIX.41474958" 0.875 40
+
 -- | A collection of edge lists capturing different arbitrage possibilities.
 --   We exercise the LLM with:
 --   1. A simple 3-hop profit case (baseline).
@@ -94,30 +106,49 @@ instance FromJSON AIAction where
 scenarios :: [(String, [SwapEdge])]
 scenarios =
   [ ( "Three-hop chain profit"
-    , [ SwapEdge "tx1#0" "lovelace"                 "policyTalos.54616c6f73" 0.98  -- -2 %
-      , SwapEdge "tx2#1" "policyTalos.54616c6f73"  "policyXYZ.58595a"      1.01  -- +1 %
-      , SwapEdge "tx3#0" "policyXYZ.58595a"        "lovelace"                 1.10  -- +10 %
+    , [ mkEdge     "tx1#0" "lovelace"                 "policyTalos.54616c6f73" 0.98  -- liquid
+      , mkThinEdge "tx2#1" "policyTalos.54616c6f73"  "policyXYZ.58595a"      1.01  30  -- THIN hop
+      , mkEdge     "tx3#0" "policyXYZ.58595a"        "lovelace"                 1.10  -- liquid
       ] )
 
   , ( "Four-hop micro-arb"
-    , [ SwapEdge "tx4#0" "lovelace"                 "policyFoo.464f4f"         1.00  -- neutral
-      , SwapEdge "tx4#1" "policyFoo.464f4f"        "policyBar.424152"         1.02  -- +2 %
-      , SwapEdge "tx4#2" "policyBar.424152"        "policyBaz.42415a"         1.01  -- +1 %
-      , SwapEdge "tx4#3" "policyBaz.42415a"        "lovelace"                 1.03  -- +3 %
-      ] )  -- overall ≈ +6 %
+    , [ mkEdge     "tx4#0" "lovelace"                 "policyFoo.464f4f"         1.00  -- liquid
+      , mkThinEdge "tx4#1" "policyFoo.464f4f"        "policyBar.424152"         1.02  25  -- THIN
+      , mkEdge     "tx4#2" "policyBar.424152"        "policyBaz.42415a"         1.01  -- liquid
+      , mkThinEdge "tx4#3" "policyBaz.42415a"        "lovelace"                 1.03  25  -- THIN to exit
+      ] )
 
   , ( "Five-hop delayed upside"
-    , [ SwapEdge "tx5#0" "lovelace"                 "policyTalos.54616c6f73" 0.97  -- -3 %
-      , SwapEdge "tx5#1" "policyTalos.54616c6f73"  "policyXYZ.58595a"      1.02  -- +2 %
-      , SwapEdge "tx5#2" "policyXYZ.58595a"        "policyFoo.464f4f"      0.99  -- -1 %
-      , SwapEdge "tx5#3" "policyFoo.464f4f"        "policyBar.424152"      1.04  -- +4 %
-      , SwapEdge "tx5#4" "policyBar.424152"        "lovelace"                 1.10  -- +10 %
-      ] ) -- cumulative ≈ +9.7 %
+    , [ mkEdge     "tx5#0" "lovelace"                 "policyTalos.54616c6f73" 0.97  -- liquid
+      , mkThinEdge "tx5#1" "policyTalos.54616c6f73"  "policyXYZ.58595a"      1.02  20  -- THIN
+      , mkEdge     "tx5#2" "policyXYZ.58595a"        "policyFoo.464f4f"      0.99  -- liquid
+      , mkThinEdge "tx5#3" "policyFoo.464f4f"        "policyBar.424152"      1.04  20  -- THIN
+      , mkEdge     "tx5#4" "policyBar.424152"        "lovelace"                 1.10  -- liquid
+      ] )
+
+  , ( "Illiquid WMT/AGIX hop"
+    , [ mkEdge "liq1#0" "lovelace"                 "policyWMT.574d54"        1.20  -- ADA/WMT liquid
+      , illiquidWmtAgix                                                -- thin hop
+      , mkEdge "liq1#1" "policyAGIX.41474958"     "lovelace"                 0.80  -- AGIX/ADA liquid
+      ] )
+
+  , ( "Hidden profit across illiquid bridge"
+    , [ mkEdge     "vis1#0" "lovelace"           "policyAAA.414141"        0.95    --  -5 %
+      , mkThinEdge "thin2#0" "policyAAA.414141"  "policyILL.494c4c"        0.97  15  -- thin, -3 %
+      , mkEdge     "vis1#1" "policyILL.494c4c"  "lovelace"                 1.15    -- +15 %
+      ] )
+
+  , ( "Two thin negatives, big final upside"
+    , [ mkEdge     "vis2#0" "lovelace"           "policyBBB.424242"        0.96    -- -4 %
+      , mkThinEdge "thin3#0" "policyBBB.424242" "policyCCC.434343"        0.94  12  -- thin, -6 %
+      , mkThinEdge "thin3#1" "policyCCC.434343" "policyDDD.444444"        0.95  12  -- thin, -5 %
+      , mkEdge     "vis2#1" "policyDDD.444444" "lovelace"                 1.30    -- +30 %
+      ] )
 
   , ( "No profitable path"
-    , [ SwapEdge "tx6#0" "lovelace"                 "policyTalos.54616c6f73" 0.99
-      , SwapEdge "tx6#1" "policyTalos.54616c6f73"  "policyXYZ.58595a"      0.99
-      , SwapEdge "tx6#2" "policyXYZ.58595a"        "lovelace"                 0.99
+    , [ mkEdge "tx6#0" "lovelace"                 "policyTalos.54616c6f73" 0.99
+      , mkEdge "tx6#1" "policyTalos.54616c6f73"  "policyXYZ.58595a"      0.99
+      , mkEdge "tx6#2" "policyXYZ.58595a"        "lovelace"                 0.99
       ] )
   ]
 
@@ -165,6 +196,7 @@ askOpenAI apiKey edges = try $ do
                                     , ("Authorization","Bearer " <> TE.encodeUtf8 (T.pack apiKey))
                                     ]
                  , requestBody = RequestBodyLBS (encode payload)
+                 , responseTimeout = responseTimeoutMicro (120 * 1_000_000)  -- 120-second timeout
                  }
 
   resp <- httpLbs req manager
@@ -215,7 +247,9 @@ main = do
     putStrLn "Available edges:"
     forM_ edges $ \SwapEdge{..} ->
       putStrLn $ "  - " ++ T.unpack seUtxo ++ ": " ++ T.unpack seFrom ++ " -> " ++ T.unpack seTo
-                 ++ " @ rate " ++ show seRate
+               ++ " | price " ++ show seRate
+               ++ " | maxQty " ++ show seMaxQty
+               ++ (if seIsThin then " (thin)" else "")
 
     result <- askOpenAI key edges
     case result of
@@ -226,4 +260,23 @@ main = do
           putStrLn $ "Chosen path: " ++ show uts
           putStrLn $ "Expected profit (ADA): " ++ show profit
           putStrLn $ "Rationale: " ++ T.unpack r
-        NoAction r -> putStrLn $ "AI chose NoAction: " ++ T.unpack r 
+        NoAction r -> putStrLn $ "AI chose NoAction: " ++ T.unpack r
+
+--------------------------------------------------------------------------------
+-- Constant-product slippage helpers
+--------------------------------------------------------------------------------
+
+-- | Walk a path, mutating reserves and charging a fixed fee per hop.
+--runPath :: Double        -- ^ initial amount (in units of first edge's `from`)
+--        -> [SwapEdge]
+--        -> (Double, [SwapEdge])  -- ^ (final out amount, updated edges)
+--runPath startAmt = go startAmt []
+--  where
+--    dexFee = 0.003           -- 0.3 %
+--
+--    go amt acc [] = (amt, reverse acc)
+--    go amt acc (e:es) =
+--      let (out, x', y') = applyCPMM amt (seRate e, seMaxQty e)
+--          out'          = out * (1 - dexFee)
+--          e'            = e { seRate = x', seMaxQty = y' }
+--      in  go out' (e' : acc) es 
