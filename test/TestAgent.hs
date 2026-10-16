@@ -2,7 +2,7 @@ module Main where
 
 import CLI.Agent (runAgentMonitor)
 import CLI.Types
-import System.Environment (getArgs)
+import System.Environment (getArgs, lookupEnv)
 import System.Directory (getHomeDirectory, createDirectoryIfMissing, doesFileExist)
 import System.FilePath ((</>))
 import Control.Monad (unless)
@@ -69,6 +69,9 @@ main = do
   
   putStrLn $ "Using address: " ++ addrStr
   
+  blockfrostProjectId <- lookupEnv "BLOCKFROST_PROJECT_ID"
+  agentApiKey <- lookupEnv "AGENT_API_KEY"
+
   -- Set up minimal test configuration with the API credentials
   let testConfig = AgentOptions {
         aoSigningKey = skeyFile,
@@ -78,10 +81,10 @@ main = do
         aoAskAsset = ("1d7f33bd23d85e1a25d87d73fcf1df8d7d72b7756c165fc178fb3c1", "5457"),
         aoNetworkMagic = Just 1,  -- testnet
         aoDryRun = True,  -- Important for testing
-        aoBlockfrostProjectId = Just "mainnetXdMvEPp07a5GgSWtpSqUytnmtR4OvJzr",
+        aoBlockfrostProjectId = blockfrostProjectId,
         aoNodeSocket = Nothing, -- Not needed with Blockfrost
         aoApiBase = "https://api.fluxpointstudios.com",  -- API endpoint
-        aoApiKey = Just "16dc5e5e6671ae253eded051fab30876ca44d23c8089af7a07679528ed21eee2",
+        aoApiKey = agentApiKey,
         aoPollSeconds = 5,
         aoProtocolParamsFile = Just paramsFile, -- Use our dummy params
         aoMakerOnly = True
@@ -89,7 +92,7 @@ main = do
   
   putStrLn "Starting agent in test mode (dry run)..."
   putStrLn $ "API Base: " ++ aoApiBase testConfig
-  putStrLn $ "API Key: " ++ take 10 (maybe "" id (aoApiKey testConfig)) ++ "..."
+  putStrLn $ "API Key: " ++ maybe "unset" (const "set") (aoApiKey testConfig)
   
   -- Run the agent
   runAgentMonitor testConfig
